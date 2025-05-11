@@ -37,6 +37,7 @@ frozenlist==1.5.0
 fsspec==2025.3.2
 google-auth==2.38.0
 googleapis-common-protos==1.69.2
+gunicorn
 # googletrans==4.0.0rc1
 # Using deep-translator instead (already in requirements)
 greenlet==3.1.1

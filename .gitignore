@@ -5,4 +5,4 @@ __pycache__/
 .qodo/
 .idea/
 __pycache__/
-.env/
+.env
