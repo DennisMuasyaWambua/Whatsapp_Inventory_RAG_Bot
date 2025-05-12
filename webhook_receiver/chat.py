@@ -428,13 +428,13 @@ def chat_with_database(db_url: str, query: str = None):
                 prompt = f"""
                 You are a friendly and knowledgeable ecommerce assistant trained to help customers with product and sales-related questions.
 
-                🎯 Your objectives:
+                Your objectives:
                 1. Help the customer find products using only the provided context.
                 2. Suggest similar or related items based on what's available in the context.
                 3. Recommend relevant upsells or popular complementary products.
                 4. DO NOT reveal or refer to any customer data, personal history, or private information—even if it exists in the database.
 
-                📌 Rules:
+                Rules:
                 - Use ONLY the context to answer.
                 - If the answer is not in the context, reply:  
                 "I don't have enough information to answer that."
@@ -442,7 +442,14 @@ def chat_with_database(db_url: str, query: str = None):
                 - Format the reply for WhatsApp:  
                 Short sentences, bullet points (if needed), and easy to read on a mobile device.
 
-                🧠 Think like a helpful sales rep: be polite, warm, and offer useful suggestions without overloading the customer.
+                IMPORTANT FORMATTING INSTRUCTIONS:
+                - When listing multiple products or categories, format them in a user-friendly numbered list
+                - Extract only the product names/categories and present them neatly
+                - Example format: "We have 3 types of cups: 1. Measuring Cups, 2. Disposable Cups, 3. Coffee Mugs"
+                - Do NOT include raw data like paths, slugs, or metadata in your response
+                - When a user asks about how many of a product type you have, count the unique categories and list them by name only
+
+                Think like a helpful sales rep: be polite, warm, and offer useful suggestions without overloading the customer.
 
                 Context:  
                 {context}
@@ -461,12 +468,31 @@ def chat_with_database(db_url: str, query: str = None):
                     response = llm.invoke(prompt)
                     logging.info("Used Ollama LLM for response generation")
                 except:
-                    # If Ollama isn't available, provide a simplified response
-                    logging.info("Ollama not available, providing context-based response")
-                    response = f"Here's what I found about your query:\n\n"
-                    for i, doc in enumerate(docs[:3]):
-                        table = doc.metadata.get('table', 'Unknown')
-                        response += f"• {doc.page_content[:150]}...\n"
+                    # If Ollama isn't available, provide a user-friendly response
+                    logging.info("Ollama not available, providing user-friendly response")
+                    response = f"I found some related products for you:\n\n"
+                    
+                    # Extract product names and categorize them
+                    product_names = []
+                    for doc in docs:
+                        content = doc.page_content
+                        # Try to extract name from content
+                        if "name:" in content.lower():
+                            for line in content.split('\n'):
+                                if line.lower().startswith('name:'):
+                                    name = line.split(':', 1)[1].strip()
+                                    if name and name not in product_names:
+                                        product_names.append(name)
+                    
+                    # Format as a numbered list
+                    if product_names:
+                        response = f"We have {len(product_names)} types of products that match your query:\n\n"
+                        for i, name in enumerate(product_names, 1):
+                            response += f"{i}. {name}\n"
+                        response += "\nHow can I help you with these products today?"
+                    else:
+                        # Fallback if we couldn't extract product names
+                        response = "I found some products that might interest you, but I'm having trouble providing specific details. Could you please ask in a different way?"
                 
                 return response
                 
