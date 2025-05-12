@@ -445,9 +445,11 @@ def chat_with_database(db_url: str, query: str = None):
                 IMPORTANT FORMATTING INSTRUCTIONS:
                 - When listing multiple products or categories, format them in a user-friendly numbered list
                 - Extract only the product names/categories and present them neatly
-                - Example format: "We have 3 types of cups: 1. Measuring Cups, 2. Disposable Cups, 3. Coffee Mugs"
+                - Example format: "We have 3 types of cups: 1. Measuring Cups (KSh 450), 2. Disposable Cups (KSh 120), 3. Coffee Mugs (KSh 350)"
+                - Include price information when available, using the format: "Product Name (KSh Price)"
                 - Do NOT include raw data like paths, slugs, or metadata in your response
                 - When a user asks about how many of a product type you have, count the unique categories and list them by name only
+                - When a user asks about prices, clearly state the price next to each product name
 
                 Think like a helpful sales rep: be polite, warm, and offer useful suggestions without overloading the customer.
 
@@ -472,23 +474,40 @@ def chat_with_database(db_url: str, query: str = None):
                     logging.info("Ollama not available, providing user-friendly response")
                     response = f"I found some related products for you:\n\n"
                     
-                    # Extract product names and categorize them
-                    product_names = []
+                    # Extract product names and prices
+                    products = []
                     for doc in docs:
                         content = doc.page_content
-                        # Try to extract name from content
-                        if "name:" in content.lower():
-                            for line in content.split('\n'):
-                                if line.lower().startswith('name:'):
-                                    name = line.split(':', 1)[1].strip()
-                                    if name and name not in product_names:
-                                        product_names.append(name)
+                        product_info = {"name": "", "price": ""}
+                        
+                        # Try to extract name and price from content
+                        for line in content.split('\n'):
+                            line_lower = line.lower()
+                            if line_lower.startswith('name:'):
+                                product_info["name"] = line.split(':', 1)[1].strip()
+                            elif any(price_field in line_lower for price_field in ['price:', 'regular_price:', 'sale_price:', 'cost:']):
+                                try:
+                                    price_parts = line.split(':', 1)
+                                    if len(price_parts) > 1:
+                                        price_value = price_parts[1].strip()
+                                        # Clean up price value
+                                        if price_value and price_value not in ["None", "null"]:
+                                            product_info["price"] = price_value
+                                except:
+                                    pass
+                        
+                        # Add to products list if we have a name
+                        if product_info["name"] and not any(p["name"] == product_info["name"] for p in products):
+                            products.append(product_info)
                     
-                    # Format as a numbered list
-                    if product_names:
-                        response = f"We have {len(product_names)} types of products that match your query:\n\n"
-                        for i, name in enumerate(product_names, 1):
-                            response += f"{i}. {name}\n"
+                    # Format as a numbered list with prices
+                    if products:
+                        response = f"We have {len(products)} types of products that match your query:\n\n"
+                        for i, product in enumerate(products, 1):
+                            if product["price"]:
+                                response += f"{i}. {product['name']} (KSh {product['price']})\n"
+                            else:
+                                response += f"{i}. {product['name']}\n"
                         response += "\nHow can I help you with these products today?"
                     else:
                         # Fallback if we couldn't extract product names
