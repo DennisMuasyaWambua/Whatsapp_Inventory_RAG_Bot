@@ -400,7 +400,7 @@ def chat_with_database(db_url: str, query: str = None):
                 # Load existing vector store
                 logging.info("Loading existing vector store...")
                 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-                vector_store = FAISS.load_local(vector_store_path, embeddings)
+                vector_store = FAISS.load_local(vector_store_path, embeddings,allow_dangerous_deserialization=True)
                 logging.info("Vector store loaded successfully")
             except Exception as e:
                 logging.error(f"Failed to load vector store: {str(e)}")
