@@ -355,6 +355,97 @@ def create_vector_store_from_db(
     return vector_store
 
 
+def process_order(products, order_text):
+    """
+    Extract order details from user message and generate order confirmation.
+    
+    Args:
+        products (list): List of available products with names and prices
+        order_text (str): The user's order message
+        
+    Returns:
+        str: Order confirmation or follow-up questions
+    """
+    import re
+    
+    # Look for product mentions with quantities
+    ordered_items = []
+    total_price = 0
+    
+    # Extract potential product mentions (basic implementation)
+    for product in products:
+        product_name = product["name"].lower()
+        if product_name in order_text.lower():
+            # Look for quantity pattern (e.g., "2 cups" or "cups x2" or "cups (2)")
+            quantity_patterns = [
+                rf"(\d+)\s+{re.escape(product_name)}",  # "2 cups"
+                rf"{re.escape(product_name)}\s+x\s*(\d+)",  # "cups x2"
+                rf"{re.escape(product_name)}\s*\((\d+)\)",  # "cups (2)"
+            ]
+            
+            quantity = 1  # Default quantity
+            for pattern in quantity_patterns:
+                matches = re.search(pattern, order_text.lower())
+                if matches:
+                    quantity = int(matches.group(1))
+                    break
+            
+            # Calculate price if available
+            item_price = 0
+            if product["price"]:
+                try:
+                    item_price = float(product["price"]) * quantity
+                    total_price += item_price
+                except ValueError:
+                    # If price is not a valid number
+                    pass
+            
+            ordered_items.append({
+                "name": product["name"],
+                "quantity": quantity,
+                "price": product["price"],
+                "total": item_price
+            })
+    
+    # Check if we have shipping address
+    address_match = re.search(r"(deliver|ship|send).+to\s+(.+?)(?:\.|\n|$)", order_text, re.IGNORECASE)
+    delivery_address = address_match.group(2).strip() if address_match else None
+    
+    # Check for payment method
+    payment_methods = ["m-pesa", "mpesa", "cash on delivery", "cod", "bank transfer"]
+    payment_method = None
+    for method in payment_methods:
+        if method in order_text.lower():
+            payment_method = method
+            break
+    
+    # Generate response based on extracted information
+    if not ordered_items:
+        return "I'd be happy to help you place an order! Could you please specify which products you'd like to purchase and the quantity of each?"
+    
+    response = "Here's what I understand from your order:\n\n"
+    for item in ordered_items:
+        if item["price"]:
+            response += f"• {item['quantity']}x {item['name']} - KSh {item['price']} each (Total: KSh {item['total']})\n"
+        else:
+            response += f"• {item['quantity']}x {item['name']} - Price to be confirmed\n"
+    
+    response += f"\nOrder Total: KSh {total_price:.2f}"
+    
+    # Check if we need more information
+    missing_info = []
+    if not delivery_address:
+        missing_info.append("delivery address")
+    if not payment_method:
+        missing_info.append("preferred payment method (M-Pesa, Cash on Delivery, or Bank Transfer)")
+    
+    if missing_info:
+        response += f"\n\nTo complete your order, I'll need your {' and '.join(missing_info)}."
+    else:
+        response += f"\nDelivery to: {delivery_address}\nPayment method: {payment_method.upper()}\n\nThank you for your order! A shop representative will contact you shortly to confirm and finalize your purchase."
+    
+    return response
+
 def chat_with_database(db_url: str, query: str = None):
     """
     Process a database query and return a formatted response for WhatsApp.
@@ -432,7 +523,8 @@ def chat_with_database(db_url: str, query: str = None):
                 1. Help the customer find products using only the provided context.
                 2. Suggest similar or related items based on what's available in the context.
                 3. Recommend relevant upsells or popular complementary products.
-                4. DO NOT reveal or refer to any customer data, personal history, or private information—even if it exists in the database.
+                4. Assist customers in placing orders for products.
+                5. DO NOT reveal or refer to any customer data, personal history, or private information—even if it exists in the database.
 
                 Rules:
                 - Use ONLY the context to answer.
@@ -446,10 +538,19 @@ def chat_with_database(db_url: str, query: str = None):
                 - When listing multiple products or categories, format them in a user-friendly numbered list
                 - Extract only the product names/categories and present them neatly
                 - Example format: "We have 3 types of cups: 1. Measuring Cups (KSh 450), 2. Disposable Cups (KSh 120), 3. Coffee Mugs (KSh 350)"
-                - Include price information when available, using the format: "Product Name (KSh Price)"
+                - ALWAYS include price information when available, using the format: "Product Name (KSh Price)"
                 - Do NOT include raw data like paths, slugs, or metadata in your response
                 - When a user asks about how many of a product type you have, count the unique categories and list them by name only
                 - When a user asks about prices, clearly state the price next to each product name
+
+                ORDER HANDLING INSTRUCTIONS:
+                - When a customer wants to place an order, ask for these details:
+                  1. Which product(s) they want to purchase (product name and quantity)
+                  2. Their delivery address
+                  3. Preferred payment method (M-Pesa, Cash on Delivery, Bank Transfer)
+                - After collecting all necessary information, confirm the order details including total price
+                - When confirming an order, use the format: "ORDER SUMMARY: [product details and prices]. Total: KSh [amount]. Delivery to: [address]. Payment: [method]"
+                - Include a message that a shop representative will contact them to finalize the order
 
                 Think like a helpful sales rep: be polite, warm, and offer useful suggestions without overloading the customer.
 
@@ -472,7 +573,6 @@ def chat_with_database(db_url: str, query: str = None):
                 except:
                     # If Ollama isn't available, provide a user-friendly response
                     logging.info("Ollama not available, providing user-friendly response")
-                    response = f"I found some related products for you:\n\n"
                     
                     # Extract product names and prices
                     products = []
@@ -500,18 +600,26 @@ def chat_with_database(db_url: str, query: str = None):
                         if product_info["name"] and not any(p["name"] == product_info["name"] for p in products):
                             products.append(product_info)
                     
-                    # Format as a numbered list with prices
-                    if products:
-                        response = f"We have {len(products)} types of products that match your query:\n\n"
-                        for i, product in enumerate(products, 1):
-                            if product["price"]:
-                                response += f"{i}. {product['name']} (KSh {product['price']})\n"
-                            else:
-                                response += f"{i}. {product['name']}\n"
-                        response += "\nHow can I help you with these products today?"
+                    # Check if this is an order request
+                    order_keywords = ["order", "buy", "purchase", "checkout", "get", "want", "deliver"]
+                    is_order_request = any(keyword in query.lower() for keyword in order_keywords)
+                    
+                    if is_order_request and products:
+                        # Process as an order request
+                        response = process_order(products, query)
                     else:
-                        # Fallback if we couldn't extract product names
-                        response = "I found some products that might interest you, but I'm having trouble providing specific details. Could you please ask in a different way?"
+                        # Format as a numbered list with prices
+                        if products:
+                            response = f"We have {len(products)} types of products that match your query:\n\n"
+                            for i, product in enumerate(products, 1):
+                                if product["price"]:
+                                    response += f"{i}. {product['name']} (KSh {product['price']})\n"
+                                else:
+                                    response += f"{i}. {product['name']} (Price available upon request)\n"
+                            response += "\nHow can I help you with these products today? You can ask for more details or place an order for any product."
+                        else:
+                            # Fallback if we couldn't extract product names
+                            response = "I found some products that might interest you, but I'm having trouble providing specific details. Could you please ask in a different way?"
                 
                 return response
                 
