@@ -349,8 +349,25 @@ def create_vector_store_from_db(
     
     print(f"Created {len(documents)} chunks after splitting")
     
-    # Create and return the vector store
-    vector_store = FAISS.from_documents(documents, embeddings)
+    # Create vector store in batches to prevent memory issues
+    batch_size = 100  # Process 100 documents at a time
+    vector_store = None
+    
+    for i in range(0, len(documents), batch_size):
+        batch = documents[i:i+batch_size]
+        print(f"Processing batch {i//batch_size + 1}/{(len(documents) + batch_size - 1)//batch_size}")
+        
+        if vector_store is None:
+            # Create initial vector store with first batch
+            vector_store = FAISS.from_documents(batch, embeddings)
+        else:
+            # Add subsequent batches to existing vector store
+            batch_store = FAISS.from_documents(batch, embeddings)
+            vector_store.merge_from(batch_store)
+    
+    if vector_store is None:
+        raise ValueError("No documents to vectorize")
+    
     vector_store.save_local("faiss_index_store")
     return vector_store
 
