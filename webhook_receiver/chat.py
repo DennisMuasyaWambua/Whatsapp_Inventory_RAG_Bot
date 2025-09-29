@@ -350,12 +350,18 @@ def create_vector_store_from_db(
     print(f"Created {len(documents)} chunks after splitting")
     
     # Create vector store in batches to prevent memory issues
-    batch_size = 100  # Process 100 documents at a time
+    batch_size = 20  # Reduced batch size to prevent memory overflow
     vector_store = None
+    
+    import gc
+    import torch
     
     for i in range(0, len(documents), batch_size):
         batch = documents[i:i+batch_size]
-        print(f"Processing batch {i//batch_size + 1}/{(len(documents) + batch_size - 1)//batch_size}")
+        batch_num = i//batch_size + 1
+        total_batches = (len(documents) + batch_size - 1)//batch_size
+        
+        print(f"Processing batch {batch_num}/{total_batches} - Memory usage before batch processing")
         
         if vector_store is None:
             # Create initial vector store with first batch
@@ -364,6 +370,15 @@ def create_vector_store_from_db(
             # Add subsequent batches to existing vector store
             batch_store = FAISS.from_documents(batch, embeddings)
             vector_store.merge_from(batch_store)
+            # Explicitly delete batch_store and force garbage collection
+            del batch_store
+        
+        # Clear PyTorch cache and force garbage collection after each batch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+        print(f"Batch {batch_num}/{total_batches} completed - Memory cleared")
     
     if vector_store is None:
         raise ValueError("No documents to vectorize")
