@@ -350,7 +350,7 @@ def create_vector_store_from_db(
     print(f"Created {len(documents)} chunks after splitting")
     
     # Create vector store in batches to prevent memory issues
-    batch_size = 20  # Reduced batch size to prevent memory overflow
+    batch_size = 5  # Much smaller batch size to prevent memory overflow
     vector_store = None
     
     import gc
@@ -363,22 +363,35 @@ def create_vector_store_from_db(
         
         print(f"Processing batch {batch_num}/{total_batches} - Memory usage before batch processing")
         
-        if vector_store is None:
-            # Create initial vector store with first batch
-            vector_store = FAISS.from_documents(batch, embeddings)
-        else:
-            # Add subsequent batches to existing vector store
-            batch_store = FAISS.from_documents(batch, embeddings)
-            vector_store.merge_from(batch_store)
-            # Explicitly delete batch_store and force garbage collection
-            del batch_store
-        
-        # Clear PyTorch cache and force garbage collection after each batch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-        
-        print(f"Batch {batch_num}/{total_batches} completed - Memory cleared")
+        try:
+            if vector_store is None:
+                # Create initial vector store with first batch
+                vector_store = FAISS.from_documents(batch, embeddings)
+            else:
+                # Add subsequent batches to existing vector store
+                batch_store = FAISS.from_documents(batch, embeddings)
+                vector_store.merge_from(batch_store)
+                # Explicitly delete batch_store and force garbage collection
+                del batch_store
+                
+            # Force aggressive memory cleanup after each batch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            # Clear all references and force garbage collection
+            del batch
+            gc.collect()
+            
+            print(f"Batch {batch_num}/{total_batches} completed - Memory cleared")
+            
+        except Exception as e:
+            print(f"Error processing batch {batch_num}: {e}")
+            # Clean up on error
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+            raise
     
     if vector_store is None:
         raise ValueError("No documents to vectorize")
