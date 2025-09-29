@@ -349,49 +349,85 @@ def create_vector_store_from_db(
     
     print(f"Created {len(documents)} chunks after splitting")
     
-    # Create vector store in batches to prevent memory issues
-    batch_size = 5  # Much smaller batch size to prevent memory overflow
+    # Create vector store with pre-computed embeddings to prevent memory issues
+    batch_size = 10
     vector_store = None
     
     import gc
     import torch
+    import numpy as np
+    from langchain_community.docstore.in_memory import InMemoryDocstore
+    
+    print(f"Computing embeddings for {len(documents)} documents in batches")
+    
+    all_embeddings = []
+    all_docs = []
     
     for i in range(0, len(documents), batch_size):
         batch = documents[i:i+batch_size]
         batch_num = i//batch_size + 1
         total_batches = (len(documents) + batch_size - 1)//batch_size
         
-        print(f"Processing batch {batch_num}/{total_batches} - Memory usage before batch processing")
+        print(f"Computing embeddings for batch {batch_num}/{total_batches}")
         
         try:
-            if vector_store is None:
-                # Create initial vector store with first batch
-                vector_store = FAISS.from_documents(batch, embeddings)
-            else:
-                # Add subsequent batches to existing vector store
-                batch_store = FAISS.from_documents(batch, embeddings)
-                vector_store.merge_from(batch_store)
-                # Explicitly delete batch_store and force garbage collection
-                del batch_store
-                
-            # Force aggressive memory cleanup after each batch
+            # Extract texts from batch
+            batch_texts = [doc.page_content for doc in batch]
+            
+            # Compute embeddings for this batch
+            batch_embeddings = embeddings.embed_documents(batch_texts)
+            
+            # Store embeddings and documents
+            all_embeddings.extend(batch_embeddings)
+            all_docs.extend(batch)
+            
+            # Clear batch references and force garbage collection
+            del batch_texts, batch_embeddings, batch
+            
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            
-            # Clear all references and force garbage collection
-            del batch
             gc.collect()
             
-            print(f"Batch {batch_num}/{total_batches} completed - Memory cleared")
+            print(f"Batch {batch_num}/{total_batches} embeddings computed - Memory cleared")
             
         except Exception as e:
-            print(f"Error processing batch {batch_num}: {e}")
-            # Clean up on error
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-            raise
+            print(f"Error computing embeddings for batch {batch_num}: {e}")
+            raise e
+    
+    print(f"Creating FAISS index from {len(all_embeddings)} pre-computed embeddings")
+    
+    # Create FAISS index from pre-computed embeddings
+    try:
+        embeddings_array = np.array(all_embeddings, dtype=np.float32)
+        
+        # Create FAISS index
+        import faiss
+        dimension = embeddings_array.shape[1]
+        index = faiss.IndexFlatIP(dimension)
+        index.add(embeddings_array)
+        
+        # Create docstore
+        docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(all_docs)})
+        index_to_docstore_id = {i: str(i) for i in range(len(all_docs))}
+        
+        # Create FAISS vector store
+        from langchain_community.vectorstores.faiss import FAISS
+        vector_store = FAISS(
+            embedding_function=embeddings,
+            index=index,
+            docstore=docstore,
+            index_to_docstore_id=index_to_docstore_id
+        )
+        
+        # Clear large arrays
+        del all_embeddings, embeddings_array, all_docs
+        gc.collect()
+        
+        print("FAISS vector store created successfully")
+        
+    except Exception as e:
+        print(f"Error creating FAISS index: {e}")
+        raise e
     
     if vector_store is None:
         raise ValueError("No documents to vectorize")
