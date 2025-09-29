@@ -7,6 +7,7 @@ from rest_framework.decorators import api_view
 import logging
 
 from webhook_receiver.chat import chat_with_database, create_vector_store_from_db
+from webhook_receiver.memory_monitor import monitor_memory, MemoryLimitedProcessor
 from webhook_receiver.utils import verify, handle_message
 
 class WebHookVerification(APIView):
@@ -42,6 +43,7 @@ class WebHookVerification(APIView):
 
 
 @api_view(['POST'])
+@monitor_memory
 def vectorize_database(request):
     """
     REST endpoint to vectorize any database dynamically.
@@ -66,8 +68,9 @@ def vectorize_database(request):
         
         logging.info(f"Starting vectorization for database: {db_url}")
         
-        # Create vector store from the provided database
-        vector_store = create_vector_store_from_db(db_url, embedding_model)
+        # Use memory-limited processor for vectorization
+        with MemoryLimitedProcessor(memory_limit_mb=1024, cleanup_threshold_mb=768):
+            vector_store = create_vector_store_from_db(db_url, embedding_model)
         
         logging.info("Database vectorization completed successfully")
         

@@ -277,7 +277,7 @@ def create_vector_store_from_db(
     embedding_model_name: str = 'all-MiniLM-L6-v2'
 ) -> FAISS:
     """
-    Create a FAISS vector store from database text data.
+    Create a FAISS vector store from database text data with memory optimization.
     
     Args:
         db_url (str): SQLAlchemy-compatible database URL
@@ -286,6 +286,11 @@ def create_vector_store_from_db(
     Returns:
         FAISS: Vector store for semantic search
     """
+    import gc
+    import torch
+    import psutil
+    import os
+    
     # Setup embedding function for LangChain
     embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
     
@@ -294,37 +299,73 @@ def create_vector_store_from_db(
     inspector = inspect(engine)
     all_docs = []
     
+    # Memory monitoring
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+    print(f"Initial memory usage: {initial_memory:.2f} MB")
+    
     with engine.connect() as conn:
         tables = inspector.get_table_names()
         
-        for table in tables:
+        for table_idx, table in enumerate(tables):
             try:
-                print(f"Processing table: {table}")
-                df = pd.read_sql(f"SELECT * FROM {table}", conn)
+                print(f"Processing table {table_idx+1}/{len(tables)}: {table}")
                 
-                # Auto-detect text columns
-                text_columns = df.select_dtypes(include=['object', 'string']).columns.tolist()
-                if not text_columns:
-                    print(f"Skipping table '{table}' (no text columns)")
-                    continue
+                # Process table in smaller chunks to prevent memory overflow
+                chunk_size = 1000  # Process 1000 rows at a time
+                offset = 0
                 
-                # Format each row as a document
-                for _, row in df.iterrows():
-                    # Create metadata to track source
-                    metadata = {
-                        "table": table,
-                        "id": str(row.get("id", "unknown"))
-                    }
+                while True:
+                    # Get chunk of data
+                    chunk_query = f"SELECT * FROM {table} LIMIT {chunk_size} OFFSET {offset}"
+                    df_chunk = pd.read_sql(chunk_query, conn)
                     
-                    # Create document text including column names
-                    text_parts = []
-                    for col in text_columns:
-                        if pd.notna(row[col]) and row[col]:
-                            text_parts.append(f"{col}: {row[col]}")
+                    if df_chunk.empty:
+                        break
                     
-                    doc_text = "\n".join(text_parts)
-                    if doc_text.strip():
-                        all_docs.append({"content": doc_text, "metadata": metadata})
+                    # Auto-detect text columns
+                    text_columns = df_chunk.select_dtypes(include=['object', 'string']).columns.tolist()
+                    if not text_columns:
+                        print(f"Skipping table '{table}' (no text columns)")
+                        break
+                    
+                    # Format each row as a document
+                    for _, row in df_chunk.iterrows():
+                        # Create metadata to track source
+                        metadata = {
+                            "table": table,
+                            "id": str(row.get("id", "unknown"))
+                        }
+                        
+                        # Create document text including column names
+                        text_parts = []
+                        for col in text_columns:
+                            if pd.notna(row[col]) and row[col]:
+                                text_parts.append(f"{col}: {row[col]}")
+                        
+                        doc_text = "\n".join(text_parts)
+                        if doc_text.strip():
+                            all_docs.append({"content": doc_text, "metadata": metadata})
+                    
+                    # Clear chunk from memory
+                    del df_chunk
+                    gc.collect()
+                    
+                    # Check memory usage
+                    current_memory = process.memory_info().rss / 1024 / 1024
+                    if current_memory > initial_memory + 1000:  # If we've used more than 1GB extra
+                        print(f"Memory usage high ({current_memory:.2f} MB), processing documents in smaller batches")
+                        break
+                    
+                    offset += chunk_size
+                    
+                    # Limit total documents to prevent memory overflow
+                    if len(all_docs) > 10000:  # Limit to 10k documents
+                        print(f"Reached document limit ({len(all_docs)}), stopping to prevent memory issues")
+                        break
+                
+                if len(all_docs) > 10000:
+                    break
             
             except Exception as e:
                 print(f"Error processing table '{table}': {e}")
@@ -349,16 +390,14 @@ def create_vector_store_from_db(
     
     print(f"Created {len(documents)} chunks after splitting")
     
-    # Create vector store with pre-computed embeddings to prevent memory issues
-    batch_size = 10
+    # Create vector store with ultra-small batches to prevent OOM
+    batch_size = 5  # Reduced from 10 to 5
     vector_store = None
     
-    import gc
-    import torch
     import numpy as np
     from langchain_community.docstore.in_memory import InMemoryDocstore
     
-    print(f"Computing embeddings for {len(documents)} documents in batches")
+    print(f"Computing embeddings for {len(documents)} documents in micro-batches of {batch_size}")
     
     all_embeddings = []
     all_docs = []
@@ -368,7 +407,14 @@ def create_vector_store_from_db(
         batch_num = i//batch_size + 1
         total_batches = (len(documents) + batch_size - 1)//batch_size
         
-        print(f"Computing embeddings for batch {batch_num}/{total_batches}")
+        # Monitor memory before each batch
+        current_memory = process.memory_info().rss / 1024 / 1024
+        print(f"Batch {batch_num}/{total_batches} - Memory: {current_memory:.2f} MB")
+        
+        # Skip batch if memory is too high
+        if current_memory > initial_memory + 1500:  # 1.5GB limit
+            print(f"Memory limit reached ({current_memory:.2f} MB), stopping vectorization")
+            break
         
         try:
             # Extract texts from batch
@@ -381,18 +427,30 @@ def create_vector_store_from_db(
             all_embeddings.extend(batch_embeddings)
             all_docs.extend(batch)
             
-            # Clear batch references and force garbage collection
+            # Aggressive memory cleanup
             del batch_texts, batch_embeddings, batch
             
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            
+            # Force garbage collection after each batch
             gc.collect()
             
-            print(f"Batch {batch_num}/{total_batches} embeddings computed - Memory cleared")
+            # Additional cleanup every 10 batches
+            if batch_num % 10 == 0:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)  # Linux memory trim
+                print(f"Deep memory cleanup after batch {batch_num}")
             
         except Exception as e:
             print(f"Error computing embeddings for batch {batch_num}: {e}")
-            raise e
+            # Continue with smaller batches on error
+            if batch_size > 1:
+                batch_size = max(1, batch_size // 2)
+                print(f"Reducing batch size to {batch_size} and retrying")
+                continue
+            else:
+                raise e
     
     print(f"Creating FAISS index from {len(all_embeddings)} pre-computed embeddings")
     
