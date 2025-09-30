@@ -47,9 +47,17 @@ python manage.py migrate
 
 ### 4. Start the Server
 
+#### Development Mode
 ```bash
 python manage.py runserver
 ```
+
+#### Production Mode (Recommended)
+```bash
+python start_server.py
+```
+
+The production startup script includes optimized memory management and performance settings.
 
 ## Exposing Your Server for Webhook Testing
 

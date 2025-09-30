@@ -315,9 +315,22 @@ def create_vector_store_from_db(
                 chunk_size = 1000  # Process 1000 rows at a time
                 offset = 0
                 
+                # First, get total row count for the table
+                count_query = f"SELECT COUNT(*) as total_rows FROM {table}"
+                total_rows = pd.read_sql(count_query, conn).iloc[0]['total_rows']
+                
+                # Calculate 10% of the total rows, minimum 1
+                rows_to_process = max(1, int(total_rows * 0.1))
+                print(f"Table {table} has {total_rows} rows, processing {rows_to_process} rows (10%)")
+                
                 while True:
-                    # Get chunk of data
-                    chunk_query = f"SELECT * FROM {table} LIMIT {chunk_size} OFFSET {offset}"
+                    # Get chunk of data, but limit to 10% of total rows
+                    remaining_rows = rows_to_process - offset
+                    if remaining_rows <= 0:
+                        break
+                    
+                    current_chunk_size = min(chunk_size, remaining_rows)
+                    chunk_query = f"SELECT * FROM {table} LIMIT {current_chunk_size} OFFSET {offset}"
                     df_chunk = pd.read_sql(chunk_query, conn)
                     
                     if df_chunk.empty:
