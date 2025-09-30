@@ -404,7 +404,7 @@ def create_vector_store_from_db(
     print(f"Created {len(documents)} chunks after splitting")
     
     # Create vector store with ultra-small batches to prevent OOM
-    batch_size = 5  # Reduced from 10 to 5
+    batch_size = 1  # Reduced to 1 to prevent memory overflow
     vector_store = None
     
     import numpy as np
