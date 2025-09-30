@@ -15,9 +15,15 @@ FROM ollama-base
 # Create app directory
 WORKDIR /app
 
+# Create virtual environment
+RUN python3 -m venv /opt/venv
+
+# Activate virtual environment and install dependencies
+ENV PATH="/opt/venv/bin:$PATH"
+
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
