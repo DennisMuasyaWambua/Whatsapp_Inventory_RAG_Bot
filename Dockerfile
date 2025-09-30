@@ -46,21 +46,10 @@ RUN cat > start.sh <<'EOF' && chmod +x start.sh
 
 # Start Ollama server in background
 ollama serve &
-OLLAMA_PID=$!
 
 # Wait for Ollama to be ready
 echo "Waiting for Ollama to start..."
-sleep 5
-
-# Quick health check
-for i in {1..10}; do
-    if curl -f http://localhost:11434/api/tags > /dev/null 2>&1; then
-        echo "Ollama is ready!"
-        break
-    fi
-    echo "Waiting for Ollama... attempt $i/10"
-    sleep 1
-done
+sleep 10
 
 # Verify model is available
 echo "Available models:"
