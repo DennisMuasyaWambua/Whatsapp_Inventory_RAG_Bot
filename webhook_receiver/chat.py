@@ -716,12 +716,16 @@ def chat_with_database(db_url: str, query: str = None):
 
                 """
                 
-                # Check if Ollama is available
+                # Use HuggingFace model for response generation
                 try:
-                    from langchain_ollama.llms import OllamaLLM
-                    llm = OllamaLLM(model="llama2")
+                    from langchain_huggingface import HuggingFacePipeline
+                    from transformers import pipeline
+                    
+                    # Create a text generation pipeline with all-MiniLM-L6-v2
+                    text_generator = pipeline("text-generation", model="sentence-transformers/all-MiniLM-L6-v2", max_length=512)
+                    llm = HuggingFacePipeline(pipeline=text_generator)
                     response = llm.invoke(prompt)
-                    logging.info("Used Ollama LLM for response generation")
+                    logging.info("Used HuggingFace all-MiniLM-L6-v2 for response generation")
                 except:
                     # If Ollama isn't available, provide a user-friendly response
                     logging.info("Ollama not available, providing user-friendly response")
