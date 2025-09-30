@@ -12,7 +12,7 @@
 
 # def create_vector_store_from_db(
 #     db_url: str,
-#     embedding_model_name: str = 'all-MiniLM-L6-v2'
+#     embedding_model_name: str = 'paraphrase-MiniLM-L3-v2'
 # ) -> FAISS:
 #     """
 #     Create a FAISS vector store from database text data.
@@ -206,11 +206,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from typing import Dict, Tuple, List, Any
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from memory_limiter import MemoryLimiter, memory_monitor
 
 
 def vectorize_entire_database(
     db_url: str,
-    embedding_model: str = 'all-MiniLM-L6-v2',
+    embedding_model: str = 'paraphrase-MiniLM-L3-v2',
     max_rows: int = None,
     store_vectors: bool = False,
     output_path: str = 'vector_output.npz'
@@ -272,9 +276,10 @@ def vectorize_entire_database(
     return results
 
 
+@memory_monitor(max_memory_mb=800)
 def create_vector_store_from_db(
     db_url: str,
-    embedding_model_name: str = 'all-MiniLM-L6-v2'
+    embedding_model_name: str = 'paraphrase-MiniLM-L3-v2'
 ) -> FAISS:
     """
     Create a FAISS vector store from database text data with memory optimization.
@@ -292,7 +297,16 @@ def create_vector_store_from_db(
     import os
     
     # Setup embedding function for LangChain
-    embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=embedding_model_name,
+        model_kwargs={'device': 'cpu'},  # Force CPU for consistency
+        encode_kwargs={
+            'truncation': True,
+            'padding': True,
+            'max_length': 256,  # Limit token length for speed
+            'batch_size': 1     # Small batch size for memory efficiency
+        }
+    )
     
     # Connect to database and extract text data
     engine = create_engine(db_url)
@@ -319,9 +333,9 @@ def create_vector_store_from_db(
                 count_query = f"SELECT COUNT(*) as total_rows FROM {table}"
                 total_rows = pd.read_sql(count_query, conn).iloc[0]['total_rows']
                 
-                # Calculate 1% of the total rows, minimum 1
-                rows_to_process = max(1, int(total_rows * 0.01))
-                print(f"Table {table} has {total_rows} rows, processing {rows_to_process} rows (1%)")
+                # Calculate 0.1% of the total rows, minimum 1, maximum 100
+                rows_to_process = max(1, min(100, int(total_rows * 0.001)))
+                print(f"Table {table} has {total_rows} rows, processing {rows_to_process} rows (0.1% max 100)")
                 
                 while True:
                     # Get chunk of data, but limit to 1% of total rows
@@ -366,18 +380,18 @@ def create_vector_store_from_db(
                     
                     # Check memory usage
                     current_memory = process.memory_info().rss / 1024 / 1024
-                    if current_memory > initial_memory + 1000:  # If we've used more than 1GB extra
+                    if current_memory > initial_memory + 300:  # If we've used more than 300MB extra
                         print(f"Memory usage high ({current_memory:.2f} MB), processing documents in smaller batches")
                         break
                     
                     offset += chunk_size
                     
                     # Limit total documents to prevent memory overflow
-                    if len(all_docs) > 10000:  # Limit to 10k documents
+                    if len(all_docs) > 1000:  # Limit to 1k documents
                         print(f"Reached document limit ({len(all_docs)}), stopping to prevent memory issues")
                         break
                 
-                if len(all_docs) > 10000:
+                if len(all_docs) > 1000:
                     break
             
             except Exception as e:
@@ -425,7 +439,7 @@ def create_vector_store_from_db(
         print(f"Batch {batch_num}/{total_batches} - Memory: {current_memory:.2f} MB")
         
         # Skip batch if memory is too high
-        if current_memory > initial_memory + 1500:  # 1.5GB limit
+        if current_memory > initial_memory + 500:  # 500MB limit
             print(f"Memory limit reached ({current_memory:.2f} MB), stopping vectorization")
             break
         
@@ -598,6 +612,7 @@ def process_order(products, order_text):
     
     return response
 
+@memory_monitor(max_memory_mb=600)
 def chat_with_database(db_url: str, query: str = None):
     """
     Process a database query and return a formatted response for WhatsApp.
@@ -642,7 +657,16 @@ def chat_with_database(db_url: str, query: str = None):
             try:
                 # Load existing vector store
                 logging.info("Loading existing vector store...")
-                embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+                embeddings = HuggingFaceEmbeddings(
+                    model_name="paraphrase-MiniLM-L3-v2",
+                    model_kwargs={'device': 'cpu'},  # Force CPU for consistency
+                    encode_kwargs={
+                        'truncation': True,
+                        'padding': True,
+                        'max_length': 256,  # Limit token length for speed
+                        'batch_size': 1     # Small batch size for memory efficiency
+                    }
+                )
                 vector_store = FAISS.load_local(vector_store_path, embeddings,allow_dangerous_deserialization=True)
                 logging.info("Vector store loaded successfully")
             except Exception as e:
@@ -652,130 +676,161 @@ def chat_with_database(db_url: str, query: str = None):
         # Process the query if we have a valid vector store
         if query and vector_store:
             try:
-                # Create retriever from vector store
+                # Create retriever from vector store with optimized search parameters for speed
                 retriever = vector_store.as_retriever(
                     search_type="similarity",
-                    search_kwargs={"k": 5}  # Return top 5 most relevant chunks
+                    search_kwargs={
+                        "k": 5,   # Reduced to 5 for faster processing
+                        "fetch_k": 10  # Reduced candidate pool for speed
+                    }
                 )
                 
                 # Get relevant documents
-                docs = retriever.get_relevant_documents(query)
+                docs = retriever.invoke(query)
                 
                 if not docs:
-                    return "I couldn't find any information related to your question in our database."
+                    return "I couldn't find any information related to your question in our database. Could you try asking about specific products, prices, or stock levels?"
                 
                 # Format context from relevant documents
                 context = "\n\n".join([doc.page_content for doc in docs])
                 
+                # Debug: Log the retrieved context
+                logging.info(f"Retrieved context length: {len(context)} characters")
+                logging.info(f"Number of documents retrieved: {len(docs)}")
+                logging.info(f"First 200 chars of context: {context[:200]}")
+                
                 # Build prompt for LLM
                 prompt = f"""
-                You are a friendly and knowledgeable ecommerce assistant trained to help customers with product and sales-related questions.
+You are a professional and friendly customer support assistant for an inventory/e-commerce system.
 
-                Your objectives:
-                1. Help the customer find products using only the provided context.
-                2. Suggest similar or related items based on what's available in the context.
-                3. Recommend relevant upsells or popular complementary products.
-                4. Assist customers in placing orders for products.
-                5. DO NOT reveal or refer to any customer data, personal history, or private information—even if it exists in the database.
+Instructions:
+1. Use ONLY the provided context to answer questions
+2. If the context doesn't contain the answer, say "I don't have that specific information available"
+3. Be specific and helpful - include product names, prices, and quantities when available
+4. Format responses clearly for WhatsApp (short paragraphs, bullet points when helpful)
+5. If multiple products match, list them with their details
 
-                Rules:
-                - Use ONLY the context to answer.
-                - If the answer is not in the context, reply:  
-                "I don't have enough information to answer that."
-                - Responses must be clear, concise, and written in a friendly, helpful tone.
-                - Format the reply for WhatsApp:  
-                Short sentences, bullet points (if needed), and easy to read on a mobile device.
+Context from database:
+{context}
 
-                IMPORTANT FORMATTING INSTRUCTIONS:
-                - When listing multiple products or categories, format them in a user-friendly numbered list
-                - Extract only the product names/categories and present them neatly
-                - Example format: "We have 3 types of cups: 1. Measuring Cups (KSh 450), 2. Disposable Cups (KSh 120), 3. Coffee Mugs (KSh 350)"
-                - ALWAYS include price information when available, using the format: "Product Name (KSh Price)"
-                - Do NOT include raw data like paths, slugs, or metadata in your response
-                - When a user asks about how many of a product type you have, count the unique categories and list them by name only
-                - When a user asks about prices, clearly state the price next to each product name
+Customer question: {query}
 
-                ORDER HANDLING INSTRUCTIONS:
-                - When a customer wants to place an order, ask for these details:
-                  1. Which product(s) they want to purchase (product name and quantity)
-                  2. Their delivery address
-                  3. Preferred payment method (M-Pesa, Cash on Delivery, Bank Transfer)
-                - After collecting all necessary information, confirm the order details including total price
-                - When confirming an order, use the format: "ORDER SUMMARY: [product details and prices]. Total: KSh [amount]. Delivery to: [address]. Payment: [method]"
-                - Include a message that a shop representative will contact them to finalize the order
-
-                Think like a helpful sales rep: be polite, warm, and offer useful suggestions without overloading the customer.
-
-                Context:  
-                {context}
-
-                Question:  
-                {query}
-
-                Answer:
-
-                """
+Response:"""
                 
-                # Use HuggingFace model for response generation
+                # Use lighter Llama models for response generation or fallback to structured response
                 try:
-                    from langchain_huggingface import HuggingFacePipeline
-                    from transformers import pipeline
+                    # Prioritize fastest models first: 1B model for speed
+                    models_to_try = ["llama3.2:1b"]  # Only use the smallest, fastest model
+                    response = None
                     
-                    # Create a text generation pipeline with all-MiniLM-L6-v2
-                    text_generator = pipeline("text-generation", model="sentence-transformers/all-MiniLM-L6-v2", max_length=512)
-                    llm = HuggingFacePipeline(pipeline=text_generator)
-                    response = llm.invoke(prompt)
-                    logging.info("Used HuggingFace all-MiniLM-L6-v2 for response generation")
-                except:
-                    # If Ollama isn't available, provide a user-friendly response
-                    logging.info("Ollama not available, providing user-friendly response")
+                    for model_name in models_to_try:
+                        try:
+                            llm = OllamaLLM(
+                                model=model_name,
+                                temperature=0.3,  # Lower temperature for faster, more focused responses
+                                top_k=10,         # Limit vocabulary for speed
+                                top_p=0.8,        # Focus on most likely tokens
+                                num_predict=200,  # Limit response length for speed
+                                repeat_penalty=1.1
+                            )
+                            response = llm.invoke(prompt)
+                            logging.info(f"Used Ollama {model_name} for response generation")
+                            break
+                        except Exception as model_error:
+                            logging.warning(f"Model {model_name} failed: {str(model_error)}")
+                            continue
                     
-                    # Extract product names and prices
+                    if not response:
+                        raise Exception("Lightweight Llama model failed")
+                except Exception as e:
+                    # If Ollama isn't available, provide a better structured response
+                    logging.info(f"Ollama not available ({str(e)}), providing structured response from retrieved context")
+                    
+                    # Extract product information from retrieved documents
                     products = []
+                    all_info = []
+                    
                     for doc in docs:
                         content = doc.page_content
-                        product_info = {"name": "", "price": ""}
+                        product_info = {"name": "", "price": "", "description": "", "stock": "", "other_details": []}
                         
-                        # Try to extract name and price from content
-                        for line in content.split('\n'):
-                            line_lower = line.lower()
-                            if line_lower.startswith('name:'):
-                                product_info["name"] = line.split(':', 1)[1].strip()
-                            elif any(price_field in line_lower for price_field in ['price:', 'regular_price:', 'sale_price:', 'cost:']):
-                                try:
-                                    price_parts = line.split(':', 1)
-                                    if len(price_parts) > 1:
-                                        price_value = price_parts[1].strip()
-                                        # Clean up price value
-                                        if price_value and price_value not in ["None", "null"]:
-                                            product_info["price"] = price_value
-                                except:
-                                    pass
-                        
-                        # Add to products list if we have a name
-                        if product_info["name"] and not any(p["name"] == product_info["name"] for p in products):
-                            products.append(product_info)
-                    
-                    # Check if this is an order request
-                    order_keywords = ["order", "buy", "purchase", "checkout", "get", "want", "deliver"]
-                    is_order_request = any(keyword in query.lower() for keyword in order_keywords)
-                    
-                    if is_order_request and products:
-                        # Process as an order request
-                        response = process_order(products, query)
-                    else:
-                        # Format as a numbered list with prices
-                        if products:
-                            response = f"We have {len(products)} types of products that match your query:\n\n"
-                            for i, product in enumerate(products, 1):
-                                if product["price"]:
-                                    response += f"{i}. {product['name']} (KSh {product['price']})\n"
+                        # Parse content line by line to extract structured information
+                        lines = content.split('\n')
+                        for line in lines:
+                            if ':' in line:
+                                key, value = line.split(':', 1)
+                                key = key.strip().lower()
+                                value = value.strip()
+                                
+                                if not value or value.lower() in ['none', 'null', '']:
+                                    continue
+                                    
+                                if key in ['name', 'product_name', 'title']:
+                                    product_info["name"] = value
+                                elif key in ['price', 'regular_price', 'sale_price', 'cost']:
+                                    product_info["price"] = value
+                                elif key in ['description', 'desc', 'product_description']:
+                                    product_info["description"] = value
+                                elif key in ['stock', 'quantity', 'stock_quantity', 'inventory']:
+                                    product_info["stock"] = value
                                 else:
-                                    response += f"{i}. {product['name']} (Price available upon request)\n"
-                            response += "\nHow can I help you with these products today? You can ask for more details or place an order for any product."
+                                    # Collect other relevant details
+                                    product_info["other_details"].append(f"{key.title()}: {value}")
+                        
+                        # Add to products list if we have meaningful information
+                        if product_info["name"] or any([product_info["price"], product_info["description"], product_info["stock"]]):
+                            # Avoid duplicates
+                            if not any(p.get("name") == product_info["name"] for p in products if p.get("name")):
+                                products.append(product_info)
+                        
+                        # Also collect all content for general information
+                        if content.strip():
+                            all_info.append(content.strip())
+                    
+                    # Generate response based on extracted information
+                    if products:
+                        # Check if this is an order request
+                        order_keywords = ["order", "buy", "purchase", "checkout", "get", "want", "deliver", "cart"]
+                        is_order_request = any(keyword in query.lower() for keyword in order_keywords)
+                        
+                        if is_order_request:
+                            # Process as an order request
+                            response = process_order(products, query)
                         else:
-                            # Fallback if we couldn't extract product names
-                            response = "I found some products that might interest you, but I'm having trouble providing specific details. Could you please ask in a different way?"
+                            # Format products information
+                            if len(products) == 1:
+                                p = products[0]
+                                response = f"Here's information about {p['name'] or 'this product'}:\n\n"
+                                if p["price"]:
+                                    response += f"💰 Price: KSh {p['price']}\n"
+                                if p["stock"]:
+                                    response += f"📦 Stock: {p['stock']}\n"
+                                if p["description"]:
+                                    response += f"📝 {p['description']}\n"
+                                if p["other_details"]:
+                                    response += "\n" + "\n".join(p["other_details"][:3])  # Limit to 3 details
+                                response += "\n\nWould you like to order this product or need more information?"
+                            else:
+                                response = f"Found {len(products)} products matching your query:\n\n"
+                                for i, p in enumerate(products[:5], 1):  # Limit to 5 products
+                                    name = p["name"] or f"Product {i}"
+                                    price_info = f" - KSh {p['price']}" if p["price"] else ""
+                                    stock_info = f" (Stock: {p['stock']})" if p["stock"] else ""
+                                    response += f"{i}. {name}{price_info}{stock_info}\n"
+                                
+                                if len(products) > 5:
+                                    response += f"\n...and {len(products) - 5} more products.\n"
+                                response += "\nAsk about a specific product for more details!"
+                    else:
+                        # No structured products found, but we have content
+                        if all_info:
+                            # Provide the most relevant information from context
+                            combined_info = "\n".join(all_info[:2])  # Use first 2 chunks
+                            if len(combined_info) > 300:
+                                combined_info = combined_info[:297] + "..."
+                            response = f"Here's what I found:\n\n{combined_info}\n\nNeed more specific information? Just ask!"
+                        else:
+                            response = "I found some database records related to your query, but couldn't extract specific details. Could you be more specific about what you're looking for?"
                 
                 return response
                 
@@ -783,8 +838,8 @@ def chat_with_database(db_url: str, query: str = None):
                 logging.error(f"Error processing query with vector store: {str(e)}")
                 return "I had trouble processing your question. Could you try asking in a different way?"
         
-        # Fallback response
-        return "Thank you for your query. I'm still learning about our inventory. Please try asking a specific question about our products or stock."
+        # More specific fallback response
+        return "I'm ready to help you with product inquiries! Try asking me about specific products, prices, stock levels, or placing an order."
         
     except Exception as e:
         logging.error(f"Error in chat_with_database: {str(e)}", exc_info=True)
