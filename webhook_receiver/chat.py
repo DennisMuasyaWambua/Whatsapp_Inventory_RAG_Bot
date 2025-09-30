@@ -319,12 +319,12 @@ def create_vector_store_from_db(
                 count_query = f"SELECT COUNT(*) as total_rows FROM {table}"
                 total_rows = pd.read_sql(count_query, conn).iloc[0]['total_rows']
                 
-                # Calculate 10% of the total rows, minimum 1
-                rows_to_process = max(1, int(total_rows * 0.1))
-                print(f"Table {table} has {total_rows} rows, processing {rows_to_process} rows (10%)")
+                # Calculate 1% of the total rows, minimum 1
+                rows_to_process = max(1, int(total_rows * 0.01))
+                print(f"Table {table} has {total_rows} rows, processing {rows_to_process} rows (1%)")
                 
                 while True:
-                    # Get chunk of data, but limit to 10% of total rows
+                    # Get chunk of data, but limit to 1% of total rows
                     remaining_rows = rows_to_process - offset
                     if remaining_rows <= 0:
                         break
