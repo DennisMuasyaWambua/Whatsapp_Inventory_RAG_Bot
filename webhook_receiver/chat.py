@@ -719,25 +719,32 @@ Response:"""
                 
                 # Use lighter Llama models for response generation or fallback to structured response
                 try:
+                    # Configure Ollama for Railway deployment
+                    import os
+                    ollama_host = os.getenv('OLLAMA_HOST', 'localhost:11434')
+                    ollama_base_url = f"http://{ollama_host}"
+                    
                     # Prioritize fastest models first: 1B model for speed
-                    models_to_try = ["llama3.2:1b"]  # Only use the smallest, fastest model
+                    models_to_try = ["llama3.2:1b", "llama3.2:1b-instruct"]  # Try both variants
                     response = None
                     
                     for model_name in models_to_try:
                         try:
                             llm = OllamaLLM(
                                 model=model_name,
+                                base_url=ollama_base_url,  # Use Railway's Ollama instance
                                 temperature=0.3,  # Lower temperature for faster, more focused responses
                                 top_k=10,         # Limit vocabulary for speed
                                 top_p=0.8,        # Focus on most likely tokens
                                 num_predict=200,  # Limit response length for speed
-                                repeat_penalty=1.1
+                                repeat_penalty=1.1,
+                                timeout=30        # Add timeout for Railway deployment
                             )
                             response = llm.invoke(prompt)
-                            logging.info(f"Used Ollama {model_name} for response generation")
+                            logging.info(f"Used Ollama {model_name} for response generation at {ollama_base_url}")
                             break
                         except Exception as model_error:
-                            logging.warning(f"Model {model_name} failed: {str(model_error)}")
+                            logging.warning(f"Model {model_name} failed at {ollama_base_url}: {str(model_error)}")
                             continue
                     
                     if not response:
