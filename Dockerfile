@@ -52,19 +52,20 @@ ollama pull llama3.2:1b
 echo "Available models:"
 ollama list
 
-# Keep Ollama running and start your Django/Flask application
+# Keep Ollama running and start your Django application
 echo "Starting main application..."
-exec python3 manage.py runserver 0.0.0.0:$PORT
+exec python3 manage.py runserver 0.0.0.0:${PORT:-8000}
 EOF
 
 RUN chmod +x start.sh
 
-# Expose port for the web service
-EXPOSE $PORT
-
 # Set environment variables
 ENV OLLAMA_HOST=0.0.0.0:11434
 ENV OLLAMA_ORIGINS="*"
+ENV PORT=8000
+
+# Expose port for the web service
+EXPOSE 8000
 
 # Start both Ollama and your application
 CMD ["./start.sh"]
