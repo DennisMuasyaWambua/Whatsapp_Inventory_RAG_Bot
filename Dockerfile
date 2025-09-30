@@ -23,7 +23,7 @@ RUN python3 -m pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create a startup script that handles Ollama setup and model download
-RUN cat > start.sh << 'EOF'
+RUN cat > start.sh <<'EOF' && chmod +x start.sh
 #!/bin/bash
 
 # Start Ollama server in background
@@ -56,8 +56,6 @@ ollama list
 echo "Starting main application..."
 exec python3 manage.py runserver 0.0.0.0:${PORT:-8000}
 EOF
-
-RUN chmod +x start.sh
 
 # Set environment variables
 ENV OLLAMA_HOST=0.0.0.0:11434
