@@ -44,19 +44,42 @@ RUN ollama serve & \
 RUN cat > start.sh <<'EOF' && chmod +x start.sh
 #!/bin/bash
 
-# Start Ollama server in background
-ollama serve &
+# Function to check if Ollama is running
+check_ollama() {
+    curl -f http://localhost:11434/api/tags > /dev/null 2>&1
+}
 
-# Wait for Ollama to be ready
+# Start Ollama server in background
+echo "Starting Ollama server..."
+ollama serve &
+OLLAMA_PID=$!
+
+# Wait for Ollama to be ready with timeout
 echo "Waiting for Ollama to start..."
-sleep 10
+TIMEOUT=60
+COUNTER=0
+
+while ! check_ollama; do
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "Timeout waiting for Ollama to start"
+        exit 1
+    fi
+    echo "Waiting for Ollama... ($COUNTER/$TIMEOUT seconds)"
+    sleep 2
+    COUNTER=$((COUNTER+2))
+done
+
+echo "Ollama is ready!"
 
 # Verify model is available
 echo "Available models:"
 ollama list
 
+# Set OLLAMA_HOST for Django app
+export OLLAMA_HOST=localhost:11434
+
 # Keep Ollama running and start your Django application
-echo "Starting main application..."
+echo "Starting Django application on port ${PORT:-8000}..."
 exec python3 manage.py runserver 0.0.0.0:${PORT:-8000}
 EOF
 
