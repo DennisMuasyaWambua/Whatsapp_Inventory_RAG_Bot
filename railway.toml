@@ -2,9 +2,8 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand="./start.sh"
-healthcheckPath = null
-healthcheckTimeout = 0
+healthcheckPath = "/health"
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 
 # Railway service configuration
