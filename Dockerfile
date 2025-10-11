@@ -92,4 +92,5 @@ ENV PORT=8000
 EXPOSE 8000
 
 # Start both Ollama and your application
-CMD ["/bin/bash", "/app/start.sh"]
+ENTRYPOINT ["/bin/bash"]
+CMD ["/app/start.sh"]
