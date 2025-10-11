@@ -1,6 +1,10 @@
 # webhook_receiver/urls.py
 from django.urls import path
-from .views import WebHookVerification, vectorize_database, chat_with_vectorized_db, health_check
+from .views import (
+    WebHookVerification, vectorize_database, chat_with_vectorized_db, health_check,
+    CustomerListView, CustomerDashboardView, ContractListView, SupportTicketListView,
+    dashboard_summary
+)
 
 urlpatterns = [
     path('webhook/', WebHookVerification.as_view(), name='webhook'),
@@ -11,4 +15,11 @@ urlpatterns = [
     # New REST endpoints for database vectorization and chat
     path('vectorize-database/', vectorize_database, name='vectorize_database'),
     path('chat/', chat_with_vectorized_db, name='chat_with_db'),
+    
+    # Dashboard API endpoints
+    path('dashboard/summary/', dashboard_summary, name='dashboard_summary'),
+    path('dashboard/customers/', CustomerListView.as_view(), name='customer_list'),
+    path('dashboard/customers/<int:id>/', CustomerDashboardView.as_view(), name='customer_dashboard'),
+    path('dashboard/contracts/', ContractListView.as_view(), name='contract_list'),
+    path('dashboard/tickets/', SupportTicketListView.as_view(), name='ticket_list'),
 ]

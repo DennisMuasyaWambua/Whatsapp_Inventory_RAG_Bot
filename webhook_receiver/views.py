@@ -15,6 +15,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from memory_limiter import check_system_resources
 from webhook_receiver.utils import verify, handle_message
 from webhook_receiver.memory_monitor import monitor_memory, MemoryLimitedProcessor
+from .models import Customer, Contract, SupportTicket, Product
+from .seriailzers import CustomerDashboardSerializer, CustomerSerializer, ContractSerializer, SupportTicketSerializer
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.pagination import PageNumberPagination
+from django.db import models
 
 class WebHookVerification(APIView):
      def get(self, request):
@@ -216,3 +221,99 @@ def health_check(request):
             'status': 'error',
             'error': str(e)
         }, status=500)
+
+
+class DashboardPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class CustomerListView(ListAPIView):
+    queryset = Customer.objects.all().order_by('-created_at')
+    serializer_class = CustomerSerializer
+    pagination_class = DashboardPagination
+
+
+class CustomerDashboardView(RetrieveAPIView):
+    queryset = Customer.objects.all()
+    serializer_class = CustomerDashboardSerializer
+    lookup_field = 'id'
+
+
+class ContractListView(ListAPIView):
+    serializer_class = ContractSerializer
+    pagination_class = DashboardPagination
+    
+    def get_queryset(self):
+        queryset = Contract.objects.all().select_related('customer').prefetch_related(
+            'contract_products__product', 'billing_breakdowns'
+        ).order_by('-created_at')
+        
+        customer_id = self.request.query_params.get('customer_id')
+        if customer_id:
+            queryset = queryset.filter(customer_id=customer_id)
+            
+        return queryset
+
+
+class SupportTicketListView(ListAPIView):
+    serializer_class = SupportTicketSerializer
+    pagination_class = DashboardPagination
+    
+    def get_queryset(self):
+        queryset = SupportTicket.objects.all().select_related('customer').prefetch_related(
+            'history'
+        ).order_by('-created_at')
+        
+        customer_id = self.request.query_params.get('customer_id')
+        if customer_id:
+            queryset = queryset.filter(customer_id=customer_id)
+            
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+            
+        return queryset
+
+
+@api_view(['GET'])
+def dashboard_summary(request):
+    """
+    Dashboard summary endpoint providing overview statistics
+    """
+    try:
+        customer_count = Customer.objects.count()
+        active_contracts = Contract.objects.filter(
+            billing_status__in=['paid', 'pending']
+        ).count()
+        open_tickets = SupportTicket.objects.filter(
+            status__in=['open', 'in_progress']
+        ).count()
+        
+        total_contract_value = Contract.objects.filter(
+            billing_status__in=['paid', 'pending']
+        ).aggregate(
+            total_value=models.Sum('contract_value_usd')
+        )['total_value'] or 0
+        
+        total_mrr = Contract.objects.filter(
+            billing_status__in=['paid', 'pending']
+        ).aggregate(
+            total_mrr=models.Sum('client_mrr_usd')
+        )['total_mrr'] or 0
+        
+        return Response({
+            'customer_count': customer_count,
+            'active_contracts': active_contracts,
+            'open_tickets': open_tickets,
+            'total_contract_value_usd': float(total_contract_value),
+            'total_mrr_usd': float(total_mrr)
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logging.error(f"Error generating dashboard summary: {str(e)}")
+        return Response(
+            {"error": f"Failed to generate dashboard summary: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
