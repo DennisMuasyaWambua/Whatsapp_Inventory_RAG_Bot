@@ -1,7 +1,7 @@
 # webhook_receiver/serializers.py
 from rest_framework import serializers
 from .models import (
-    WhatsAppMessage, Customer, Product, Contract, ContractProduct,
+    WhatsAppMessage, Customer, CustomerData, Product, Contract, ContractProduct,
     BillingBreakdown, SupportTicket, TicketHistory, ContactInformation
 )
 
@@ -63,6 +63,14 @@ class ContractSerializer(serializers.ModelSerializer):
             'end_date', 'billing_cycle', 'billing_status', 'created_at', 
             'updated_at', 'contract_products', 'billing_breakdowns'
         ]
+
+class CustomerDataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerData
+        fields = ['id', 'customer_name', 'products', 'contract_value_usd', 'client_mrr_usd', 
+                  'contract_start_date', 'contract_end_date', 'billing_cycle', 'billing_breakdown',
+                  'billing_status', 'ticket_number', 'ticket_history', 'contact_name', 
+                  'contact_email', 'contact_phone']
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:

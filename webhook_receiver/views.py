@@ -15,8 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from memory_limiter import check_system_resources
 from webhook_receiver.utils import verify, handle_message
 from webhook_receiver.memory_monitor import monitor_memory, MemoryLimitedProcessor
-from .models import Customer, Contract, SupportTicket, Product
-from .seriailzers import CustomerDashboardSerializer, CustomerSerializer, ContractSerializer, SupportTicketSerializer
+from .models import Customer, CustomerData, Contract, SupportTicket, Product
+from .seriailzers import CustomerDashboardSerializer, CustomerSerializer, CustomerDataSerializer, ContractSerializer, SupportTicketSerializer
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.pagination import PageNumberPagination
 from django.db import models
@@ -230,8 +230,8 @@ class DashboardPagination(PageNumberPagination):
 
 
 class CustomerListView(ListAPIView):
-    queryset = Customer.objects.all().order_by('-created_at')
-    serializer_class = CustomerSerializer
+    queryset = CustomerData.objects.all().order_by('id')
+    serializer_class = CustomerDataSerializer
     pagination_class = DashboardPagination
 
 

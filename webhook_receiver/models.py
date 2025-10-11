@@ -14,6 +14,29 @@ class WhatsAppMessage(models.Model):
     def __str__(self):
         return f"Message from {self.sender} to {self.recipient}"
 
+class CustomerData(models.Model):
+    id = models.AutoField(primary_key=True)
+    customer_name = models.CharField(max_length=255, null=True, blank=True)
+    products = models.CharField(max_length=255, null=True, blank=True)
+    contract_value_usd = models.CharField(max_length=255, null=True, blank=True)
+    client_mrr_usd = models.CharField(max_length=255, null=True, blank=True)
+    contract_start_date = models.CharField(max_length=255, null=True, blank=True)
+    contract_end_date = models.CharField(max_length=255, null=True, blank=True)
+    billing_cycle = models.CharField(max_length=255, null=True, blank=True)
+    billing_breakdown = models.CharField(max_length=255, null=True, blank=True)
+    billing_status = models.CharField(max_length=255, null=True, blank=True)
+    ticket_number = models.CharField(max_length=255, null=True, blank=True)
+    ticket_history = models.CharField(max_length=255, null=True, blank=True)
+    contact_name = models.CharField(max_length=255, null=True, blank=True)
+    contact_email = models.CharField(max_length=255, null=True, blank=True)
+    contact_phone = models.CharField(max_length=255, null=True, blank=True)
+    
+    class Meta:
+        db_table = 'customer_data'
+    
+    def __str__(self):
+        return self.customer_name or f"Customer {self.id}"
+
 class Customer(models.Model):
     customer_name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
