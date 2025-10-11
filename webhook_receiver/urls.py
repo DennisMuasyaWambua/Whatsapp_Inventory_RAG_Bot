@@ -3,7 +3,7 @@ from django.urls import path
 from .views import (
     WebHookVerification, vectorize_database, chat_with_vectorized_db, health_check,
     CustomerListView, CustomerDashboardView, ContractListView, SupportTicketListView,
-    dashboard_summary
+    dashboard_summary, customer_comprehensive_info
 )
 
 urlpatterns = [
@@ -20,6 +20,7 @@ urlpatterns = [
     path('dashboard/summary/', dashboard_summary, name='dashboard_summary'),
     path('dashboard/customers/', CustomerListView.as_view(), name='customer_list'),
     path('dashboard/customers/<int:id>/', CustomerDashboardView.as_view(), name='customer_dashboard'),
+    path('dashboard/customers/<int:customer_id>/comprehensive/', customer_comprehensive_info, name='customer_comprehensive_info'),
     path('dashboard/contracts/', ContractListView.as_view(), name='contract_list'),
     path('dashboard/tickets/', SupportTicketListView.as_view(), name='ticket_list'),
 ]

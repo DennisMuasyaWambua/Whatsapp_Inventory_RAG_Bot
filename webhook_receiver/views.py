@@ -317,3 +317,40 @@ def dashboard_summary(request):
             {"error": f"Failed to generate dashboard summary: {str(e)}"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+def customer_comprehensive_info(request, customer_id):
+    """
+    Comprehensive customer information endpoint returning:
+    1. Customer name
+    2. Products
+    3. Contract value (USD)
+    4. Client MRR (USD)
+    5. Contract start date
+    6. Contract end date
+    7. Financial breakdown (billing cycle, billing breakdown, billing status)
+    8. Complaint history (ticket number, ticket history)
+    9. Contact information (contact name, email, phone number)
+    """
+    try:
+        customer = Customer.objects.select_related('contact_info').prefetch_related(
+            'contracts__contract_products__product',
+            'contracts__billing_breakdowns',
+            'support_tickets__history'
+        ).get(id=customer_id)
+        
+        serializer = CustomerDashboardSerializer(customer)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+    except Customer.DoesNotExist:
+        return Response(
+            {"error": "Customer not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logging.error(f"Error retrieving customer comprehensive info: {str(e)}")
+        return Response(
+            {"error": f"Failed to retrieve customer information: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
